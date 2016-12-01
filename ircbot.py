@@ -10,8 +10,9 @@ from logging import handlers
 LOGGER = logging.getLogger(__file__)
 SH = logging.StreamHandler()
 FH = logging.handlers.RotatingFileHandler("irc.log", maxBytes=5 * 1000000, backupCount = 5)
-SH.setFormatter(logging.Formatter("%(message)s"))
-FH.setFormatter(logging.Formatter("%(asctime)s:%(lineno)s:%(funcName)s:%(levelname)s:%(message)s"))
+SH.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%H:%M:%S"))
+FH.setFormatter(logging.Formatter("%(levelname)s:%(lineno)s:%(funcName)s:[%(asctime)s] %(message)s", "%H:%M:%S"))
+#FH.setFormatter(logging.Formatter("%(asctime)s:%(lineno)s:%(funcName)s:%(levelname)s:%(message)s"))
 LOGGER.setLevel(logging.INFO)
 LOGGER.addHandler(SH)
 LOGGER.addHandler(FH)
@@ -22,23 +23,8 @@ from irc.bot import SingleServerIRCBot
 
 import datetime
 
-NICK_SUFF = "-bot"
-DEF_PORT = 6667
-def get_argparser():
-    parser = ArgumentParser()
-    parser.add_argument(
-            dest="server",
-            metavar = "server[:port]",
-            help="server URL and optional port number, delimited by a colon ':'")
-    parser.add_argument(
-            dest="channel",
-            metavar = "[#]channel",
-            help="channel to connect to ('#' will be prepended if omitted)")
-    parser.add_argument(
-            dest="nickname",
-            metavar = "nickname[%s]" % NICK_SUFF,
-            help="desired nickname in the chat ('%s' will be appended if omitted)" % NICK_SUFF)
-    return parser
+def now():
+    return datetime.datetime.now()
 
 class IRCBot(SingleServerIRCBot):
     def __init__(self, channel, nickname, server, port=6667):
@@ -53,29 +39,36 @@ class IRCBot(SingleServerIRCBot):
 
     def on_welcome(self, c, e):
         c.join(self.channel)
+        LOGGER.info("Joined %s" % (self.channel,))
 
     def on_privmsg(self, c, e):
         e.__dict__["timestamp"] = datetime.datetime.now()
-        self.handle_msg(e)
+        self.on_msg(e)
         return
 
     def on_pubmsg(self, c, e):
         e.__dict__["timestamp"] = datetime.datetime.now()
-        self.handle_msg(e)
+        self.on_msg(e)
         return
-    def handle_msg(self, msg):
+    def on_msg(self, msg):
         info = self.get_msg_data(msg)
         LOGGER.info("%s-[%s] <%s> %s" %
                 (info["type"].upper(),
-                    info["timestamp"].strftime("%H:%M"),
+                    info["timestamp"].strftime("%H:%M:%S"),
                     info["source"],info["msg"])
                 )
-        self.update_state(msg, info)
+        self.handle_msg(msg, info)
         return
-    def update_state(self, msg, input):
+    def handle_msg(self, msg, input):
         if input["intention"] == self.get_nickname():
             self.do_command(msg, input["text"])
         return
+    def get_users(self):
+        users = None
+        for chname, chobj in self.channels.items():
+            users = sorted(chobj.users())
+        return users
+
     def do_command(self, e, input):
         cmd = input["text"]
         nick = input["source"]
@@ -110,6 +103,8 @@ class IRCBot(SingleServerIRCBot):
             c.notice(nick, "Not understood: " + cmd)
     def get_msg_data(self, msg):
         info = {}
+        # ME
+        info["me"] = self.get_nickname()
         # TIME
         info["timestamp"] = msg.__dict__["timestamp"]
         # TYPE
@@ -157,14 +152,36 @@ class IRCBot(SingleServerIRCBot):
                 return
             self.dcc_connect(address, port)
 
-def main():
-    parser = get_argparser()
-    args = parser.parse_args()
+NICK_SUFF = "-bot"
+DEF_PORT = 6667
+def get_argparser():
+    parser = ArgumentParser()
+    parser.add_argument(
+            dest="server",
+            metavar = "server[:port]",
+            help="server URL and optional port number, delimited by a colon ':'")
+    parser.add_argument(
+            dest="channel",
+            metavar = "[#]channel",
+            help="channel to connect to ('#' will be prepended if omitted)")
+    parser.add_argument(
+            dest="nickname",
+            metavar = "nickname[%s]" % NICK_SUFF,
+            help="desired nickname in the chat ('%s' will be appended if omitted)" % NICK_SUFF)
+    return parser
+
+def get_irc_args(args):
     server_port = args.server.split(":")
     server = server_port[0]
     port = int(server_port[1]) if len(server_port) > 1 else DEF_PORT
     channel = args.channel if args.channel[0] == "#" else "#" + args.channel
     nickname = args.nickname if args.nickname[-4:] == NICK_SUFF else args.nickname + NICK_SUFF
+    return server, port, channel, nickname
+
+def main():
+    parser = get_argparser()
+    args = parser.parse_args()
+    server, port, channel, nickname = get_irc_args(args)
     print("Server  : %s" % server)
     print("Port    : %s" % port)
     print("Channel : %s" % channel)
