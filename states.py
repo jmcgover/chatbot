@@ -19,7 +19,37 @@ class State(object):
     def next(self, info):
         assert False, "%s not implemented" % self.next.__name__
 
-"""Start State"""
+class TimeoutState(State):
+    def __init__(self, cur_info):
+        super().__init__(cur_info)
+    def is_timedout(self, info):
+        last = self.cur_info["timestamp"]
+        cur = info["timestamp"]
+        if (cur - last).total_seconds() > self.cur_info["timeout"]:
+            return True
+        return False
+
+"""1 Giveup Frustrated"""
+class OneGiveupFrustrated(State):
+    name = "1_GIVEUP_FRUSTRATED"
+    replies = ["Ok, forget you.", "Whatever."]
+    def run(self):
+        reply = random.choice(self.replies)
+        return (reply,)
+    def next(self, info):
+        return End(info)
+
+"""2 Giveup Frustrated"""
+class TwoGiveupFrustrated(State):
+    name = "2_GIVEUP_FRUSTRATED"
+    replies = ["Ok, forget you.", "Whatever."]
+    def run(self):
+        reply = random.choice(self.replies)
+        return (reply,)
+    def next(self, info):
+        return End(info)
+
+"""1 Start State"""
 class OneStart(State):
     name = "1_START"
     def run(self):
@@ -29,7 +59,7 @@ class OneStart(State):
         nextState = OneInitialOutreach(info)
         return nextState
 
-"""Start State"""
+"""2 Start State"""
 class TwoStart(State):
     name = "2_START"
     def run(self):
@@ -55,27 +85,37 @@ class End(State):
         return None
 
 """1 Initial Outreach"""
-class OneInitialOutreach(State):
+class OneInitialOutreach(TimeoutState):
     name = "1_INITIAL_OUTREACH"
     replies = ["hi","hello"]
     def run(self):
         reply = random.choice(self.replies)
         return (reply,)
     def next(self, info):
+        if "text" not in info:
+            if self.is_timedout(info):
+                return OneSecondaryOutreach(info)
+            # Keep original state
+            return self
         return OneInquiry(info)
 
 """1 Secondary Outreach"""
-class OneSecondaryOutreach(State):
+class OneSecondaryOutreach(TimeoutState):
     name = "1_SECONDARY_OUTREACH"
     replies = ["I said hi","excuse me, hello?"]
     def run(self):
         reply = random.choice(self.replies)
         return (reply,)
     def next(self, info):
+        if "text" not in info:
+            if self.is_timedout(info):
+                return OneGiveupFrustrated(info)
+            # Keep original state
+            return self
         return OneInquiry(info)
 
 """1 Inquiry"""
-class OneInquiry(State):
+class OneInquiry(TimeoutState):
     name = "1_INQUIRY"
     replies = ["how are you?","what's happening?"]
     responded_replies = [None, "that's good", "nice", "awesome"]
@@ -98,14 +138,20 @@ class OneInquiry(State):
         return (reply,)
     def next(self, info):
         nextState = self
+        if "text" not in info:
+            if self.is_timedout(info):
+                return OneGiveupFrustrated(info)
+            # Keep original time
+            return self
         if info["text"] in TwoInquiry.replies:
+            # Update time
             nextState = OneInquiryReply(info)
         else:
             self.waiting = True
         return nextState
 
 """1 Inquiry Reply"""
-class OneInquiryReply(State):
+class OneInquiryReply(TimeoutState):
     name = "1_INQUIRY_REPLY"
     replies = ["I'm good","I'm fine, thanks for asking"]
     def run(self):
@@ -115,17 +161,22 @@ class OneInquiryReply(State):
         return End(info)
 
 """2 Outreach Reply"""
-class TwoOutreachReply(State):
+class TwoOutreachReply(TimeoutState):
     name = "2_OUTREACH_REPLY"
     replies = ["hi", "hello back at you!"]
     def run(self):
         reply = random.choice(self.replies)
         return (reply,)
     def next(self, info):
+        if "text" not in info:
+            if self.is_timedout(info):
+                return TwoGiveupFrustrated(info)
+            # Keep original time
+            return self
         return TwoInquiryReply(info)
 
 """2 Outreach Reply"""
-class TwoInquiryReply(State):
+class TwoInquiryReply(TimeoutState):
     name = "2_INQUIRY_REPLY"
     replies = ["I'm good", "I'm fine"]
     def run(self):
@@ -135,13 +186,18 @@ class TwoInquiryReply(State):
         return TwoInquiry(info)
 
 """2 Inquiry"""
-class TwoInquiry(State):
+class TwoInquiry(TimeoutState):
     name = "2_INQUIRY"
     replies = ["how about you?", "and yourself?"]
     def run(self):
         reply = random.choice(self.replies)
         return (reply,)
     def next(self, info):
+        if "text" not in info:
+            if self.is_timedout(info):
+                return TwoGiveupFrustrated(info)
+            # Keep original time
+            return self
         return End(info)
 
 def main():
