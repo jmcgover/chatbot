@@ -54,6 +54,10 @@ class ChatBot(IRCBot):
         self.stop_checker()
         super().die(msg)
         return
+    def get_msg_data(self, msg):
+        info = super().get_msg_data(msg)
+        info["user"] = info["source"]
+        return info
     def start_checker(self):
         interval = random.uniform(0,self.max_poll_interval)
         #interval = random.binomial(100,0.9)/100 * self.max_poll_interval
@@ -68,12 +72,12 @@ class ChatBot(IRCBot):
         if "die" == text:
             self.die()
         elif "*state" == text:
-            source = info["source"]
+            user = info["user"]
             state_string = None
-            if source in self.convos:
-                state_string = "%s" % self.convos[source]
+            if user in self.convos:
+                state_string = "%s" % self.convos[user]
             else:
-                state_string = "No conversation with %s yet" % source
+                state_string = "No conversation with %s yet" % user
             self.send_message(info, state_string)
         return
     def poll(self):
@@ -85,7 +89,7 @@ class ChatBot(IRCBot):
     def maybe_start_convo(self):
         # Randomly Decide if we will
         options = [True, False]
-        start_convo = random.choice(options, p=[1.00, 0.00])
+        start_convo = random.choice(options, p=[0.00, 1.00])
         if start_convo:
             current_users = []
             self.get_users()
@@ -99,7 +103,8 @@ class ChatBot(IRCBot):
             else:
                 LOGGER.debug("No one to start a conversation with")
         else:
-            LOGGER.debug("Not starting a conversation with anyone")
+            #LOGGER.debug("Not starting a conversation with anyone")
+            pass
         return
     def send_message(self, info, msg, user = None):
         if "public" == info["type"]:
@@ -112,25 +117,26 @@ class ChatBot(IRCBot):
             self.connection.notice(info["target"], msg)
     def start_convo(self, user):
         LOGGER.debug("Starting conversation with %s" % user)
-        self.convos[user] = OneStart()
+        info = {"type": "public", "user" : user}
+        self.convos[user] = OneStart(info)
 
         # Get Current State
         cur_state = self.convos[user]
         LOGGER.debug("Current State:%s" % cur_state)
 
         # Transition to next state
-        info = {"type": "public", "source" : user}
         cur_state = cur_state.next(info)
         LOGGER.debug("New State:%s" % cur_state)
 
         # Run State (Get Message)
-        outgoing_message = cur_state.run()
-        LOGGER.debug("Outgoing Message:%s" % outgoing_message)
+        outgoing_messages = cur_state.run()
+        LOGGER.debug("Outgoing Message:%s" % outgoing_messages)
 
         # Update
         self.convos[user] = cur_state
-        if outgoing_message:
-            self.send_message(info, outgoing_message, user)
+        for msg in outgoing_messages:
+            if msg:
+                self.send_message(info, msg, user)
         if "START" == cur_state or "END" == cur_state:
             LOGGER.debug("Removing conversation for %s" % user)
             self.convos.pop(user, None)
@@ -139,22 +145,21 @@ class ChatBot(IRCBot):
         LOGGER.debug("Checking conversations")
         return
     def handle_msg(self, msg, info):
-        outgoing_message = None
         if info["intention"] == self.get_nickname():
             # Someone's talking to me
-            LOGGER.debug("%s's talking to me" % info["source"])
+            LOGGER.debug("%s's talking to me" % info["user"])
             if info["text"] in self.commands:
                 self.command(info)
                 return
-            source = info["source"]
+            user = info["user"]
 
             # Initialize Conversation
-            if source not in self.convos:
-                LOGGER.debug("Starting new conversation with %s" % source)
-                self.convos[source] = TwoStart()
+            if user not in self.convos:
+                LOGGER.debug("Starting new conversation with %s" % user)
+                self.convos[user] = TwoStart(info)
 
             # Get Current State
-            cur_state = self.convos[source]
+            cur_state = self.convos[user]
             LOGGER.debug("Current State:%s" % cur_state)
 
             # Transition to next state
@@ -162,16 +167,18 @@ class ChatBot(IRCBot):
             LOGGER.debug("New State:%s" % cur_state)
 
             # Run State (Get Message)
-            outgoing_message = cur_state.run()
-            LOGGER.debug("Outgoing Message:%s" % outgoing_message)
+            outgoing_messages = cur_state.run()
+            LOGGER.debug("Outgoing Messages:%s" % outgoing_messages)
 
-            # Update
-            self.convos[source] = cur_state
-            if outgoing_message:
-                self.send_message(info, outgoing_message)
+            for msg in outgoing_messages:
+                if msg:
+                    self.send_message(info, msg)
             if "START" == cur_state or "END" == cur_state:
-                LOGGER.debug("Removing conversation for %s" % source)
-                self.convos.pop(source, None)
+                LOGGER.debug("Removing conversation for %s" % user)
+                del self.convos[user]
+            else:
+                # Update Convo Dictionary
+                self.convos[user] = cur_state
         else:
             # Probably a general message
             pass
